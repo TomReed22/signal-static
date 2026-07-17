@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Signal Static — Segment 1: Galaxy Generation</title>
+<style>
+  /* Deliberately minimal. Ugly until vertical slice — your rule, not mine. */
+  body { margin: 0; background: #04070d; color: #8aa3b8; font-family: monospace; }
+  #info {
+    position: fixed; top: 10px; left: 10px;
+    background: rgba(10,16,24,.9); border: 1px solid #16222e;
+    padding: 10px; font-size: 13px; max-width: 260px;
+  }
+  svg { width: 100vw; height: 100vh; display: block; }
+  circle.node { cursor: pointer; }
+  circle.node:hover { stroke: #4fd8eb; stroke-width: 2; }
+</style>
+</head>
+<body>
+
+<div id="info">SIGNAL STATIC — seg.1<br>Click a node to inspect it.</div>
+<svg id="map" viewBox="0 0 1600 900"></svg>
+
+<script>
+/* =============================================================
+   SIGNAL STATIC — SEGMENT 1: THE GALAXY EXISTS
+   =============================================================
+   Three jobs today:
+   1. A seeded random number generator (same seed = same galaxy)
+   2. A node data model — think of it as your SQL table
+   3. Generation + rendering
+
+   Read top to bottom. Every block has a WHY comment.
+   ============================================================= */
+
+
+/* -------------------------------------------------------------
+   1. SEEDED RANDOM
+   ---------------------------------------------------------------
+   WHY: Math.random() gives a different galaxy every refresh,
+   which makes bugs impossible to reproduce. A *seeded* generator
+   is a function that produces the same "random" sequence for the
+   same starting number. Change SEED and you get a new galaxy;
+   keep it and the galaxy is identical every time. This is also
+   how "shareable galaxy seeds" work later — for free.
+
+   (This is a standard tiny algorithm called mulberry32. You do
+   not need to understand the bit-shifting line — nobody does —
+   just what it gives you: a function `rng()` that returns a
+   number between 0 and 1, deterministically.)
+---------------------------------------------------------------- */
+const SEED = 89745; // <-- change me and refresh!
+
+function makeRng(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rng = makeRng(SEED);
+
+// Helper: random integer between min and max, inclusive.
+function randInt(min, max) {
+  return Math.floor(rng() * (max - min + 1)) + min;
+}
+
+// Helper: pick a random item from an array.
+function pick(arr) {
+  return arr[Math.floor(rng() * arr.length)];
+}
+
+
+/* -------------------------------------------------------------
+   2. THE DATA MODEL — your SQL brain starts here
+   ---------------------------------------------------------------
+   WHY: The entire game state is one array of plain objects.
+   Think: SELECT * FROM nodes;
+   Every future system (fog, mining, static tide, saving) will
+   just read and update rows in this "table". If you keep this
+   discipline — state lives HERE, rendering only *reads* it —
+   you will never get the spaghetti that kills first projects.
+
+   Columns for today (more get added in later segments):
+     id        - primary key
+     name      - display name
+     x, y      - map position
+     type      - 'star' | 'planet' | 'asteroid'
+     state     - 'hidden' for everything except home (fog comes
+                 in segment 2, but we design the column NOW)
+---------------------------------------------------------------- */
+let nodes = []; // our table
+
+
+/* -------------------------------------------------------------
+   3. NAME GENERATOR (flavor, but cheap and fun)
+---------------------------------------------------------------- */
+const PREFIXES = ["KEPLER", "GLIESE", "TAU", "VEGA", "ROSS", "WOLF", "LUYTEN", "HD"];
+function makeName() {
+  return pick(PREFIXES) + "-" + randInt(100, 999);
+}
+
+
+/* -------------------------------------------------------------
+   4. GALAXY GENERATION — the jittered grid
+   ---------------------------------------------------------------
+   WHY: Pure random placement makes ugly clumps and overlaps.
+   Trick: divide the map into grid cells, put ONE node per cell,
+   then nudge it by a random offset. Organic look, guaranteed
+   spacing, ten lines of code. This is the cheap cousin of
+   Poisson disc sampling we talked about.
+---------------------------------------------------------------- */
+const MAP_W = 1600, MAP_H = 900;
+const COLS = 6, ROWS = 4;          // 6x4 = 24 cells
+const CELL_W = MAP_W / COLS;
+const CELL_H = MAP_H / ROWS;
+const NODE_CHANCE = 0.7;           // not every cell gets a node (~15-17 nodes)
+
+function generateGalaxy() {
+  nodes = [];
+  let id = 0;
+
+  for (let col = 0; col < COLS; col++) {
+    for (let row = 0; row < ROWS; row++) {
+      if (rng() > NODE_CHANCE) continue; // this cell stays empty space
+
+      // Cell's top-left corner, plus a jitter within the middle
+      // 60% of the cell (keeps nodes off cell edges → guaranteed gaps).
+      const x = col * CELL_W + CELL_W * 0.2 + rng() * CELL_W * 0.6;
+      const y = row * CELL_H + CELL_H * 0.2 + rng() * CELL_H * 0.6;
+
+      nodes.push({
+        id: id++,
+        name: makeName(),
+        x: Math.round(x),
+        y: Math.round(y),
+        type: pick(["star", "planet", "planet", "asteroid"]), // planets 2x likely
+        state: "hidden",
+      });
+    }
+  }
+
+  // THE HOME NODE: overwrite whichever generated node is closest
+  // to the map centre. WHY closest-to-centre instead of pushing a
+  // new node? Because it guarantees home always sits naturally
+  // inside the generated web, never on top of another node.
+  let home = nodes[0];
+  let bestDist = Infinity;
+  for (const n of nodes) {
+    const d = (n.x - MAP_W / 2) ** 2 + (n.y - MAP_H / 2) ** 2;
+    if (d < bestDist) { bestDist = d; home = n; }
+  }
+  home.name = "SOL — EARTH";
+  home.type = "home";
+  home.state = "revealed";
+}
+
+
+/* -------------------------------------------------------------
+   5. RENDERING — reads the table, draws the map
+   ---------------------------------------------------------------
+   WHY SVG: it's inspectable (right-click → inspect any node!),
+   CSS hover works on it, and at our node counts performance is
+   a non-issue. The golden rule: this function only READS state.
+   It never changes it. Rendering is a SELECT, never an UPDATE.
+
+   For today we render ALL nodes, including hidden ones (shown
+   dim) — because as developers we want to see the whole
+   generation result. Segment 2 makes hidden mean hidden.
+---------------------------------------------------------------- */
+const COLORS = {
+  home:     "#4fd8eb",
+  star:     "#c4d6e4",
+  planet:   "#6fe08a",
+  asteroid: "#e8b34b",
+};
+
+const svg = document.getElementById("map");
+
+function render() {
+  svg.innerHTML = ""; // wipe and redraw — crude but fine at this scale
+
+  for (const n of nodes) {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", n.x);
+    c.setAttribute("cy", n.y);
+    c.setAttribute("r", n.type === "home" ? 10 : 6);
+    c.setAttribute("fill", COLORS[n.type]);
+    c.setAttribute("class", "node");
+    c.setAttribute("opacity", n.state === "hidden" ? 0.25 : 1); // dev x-ray vision
+    c.addEventListener("click", () => inspect(n));
+    svg.appendChild(c);
+
+    // Name label next to each node
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    t.setAttribute("x", n.x + 12);
+    t.setAttribute("y", n.y + 4);
+    t.setAttribute("fill", "#3d5468");
+    t.setAttribute("font-size", "11");
+    t.setAttribute("font-family", "monospace");
+    t.textContent = n.name;
+    svg.appendChild(t);
+  }
+}
+
+
+/* -------------------------------------------------------------
+   6. INSPECT — click a node, see its row
+   ---------------------------------------------------------------
+   WHY: This is your first taste of the debugging habit that will
+   carry the whole project: when something looks wrong on screen,
+   look at the DATA, not the pixels.
+---------------------------------------------------------------- */
+function inspect(node) {
+  document.getElementById("info").innerHTML =
+    `<b>NODE ${node.id}</b><br>` +
+    `name: ${node.name}<br>` +
+    `type: ${node.type}<br>` +
+    `pos: ${node.x}, ${node.y}<br>` +
+    `state: ${node.state}`;
+  console.log("Inspected node:", node); // open DevTools (F12) → Console
+}
+
+
+/* -------------------------------------------------------------
+   RUN
+---------------------------------------------------------------- */
+generateGalaxy();
+render();
+console.log(`Galaxy generated: ${nodes.length} nodes from seed ${SEED}`);
+console.table(nodes); // <-- SQL person, meet console.table. You're welcome.
+</script>
+</body>
+</html>
