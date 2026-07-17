@@ -9,7 +9,7 @@ Plain-English dev log. One dated entry per work session: what got built, why, an
 **What was built:**
 - Fixed a file-naming accident: everything on disk had a doubled extension (`CLAUDE.md.md`, `index.html.html`, etc.) — renamed to the correct names so the game and GitHub Pages actually work.
 - Initialised git, made the first commit (Segment 1 code + design docs).
-- Set up GitHub CLI and a public repo + GitHub Pages for phone playtesting.
+- Installed GitHub CLI locally; public repo + GitHub Pages setup in progress (waiting on `gh auth login`).
 - Created this file and `PARKING_LOT.md`.
 
 **Decisions:**
@@ -20,3 +20,16 @@ Plain-English dev log. One dated entry per work session: what got built, why, an
 - **Seeded RNG (`makeRng`)** — a *closure*: `makeRng(seed)` returns a function that "remembers" `seed` between calls. This is why calling `makeRng(89745)` twice gives you two independent generators that don't interfere with each other.
 - **Array methods / `pick()`** — `arr[Math.floor(rng() * arr.length)]` is a manual random-index pick; later segments will introduce `map`/`filter`/`reduce` as the data model grows.
 - **State vs. rendering split** — `nodes` (the array) is the "table"; `render()` only reads it. This is the load-bearing architecture rule for the whole project (see CLAUDE.md).
+
+---
+
+## 2026-07-17 — Segment 1 exercise: new node types + name generator
+
+**What was built:** the Segment 1 ritual exercise, and then some. Added two new node types (`wreckage`, `comet`) to `generateGalaxy()`'s type pool and `COLORS`, then rebuilt `makeName()` from a single naming pattern into a 7-pattern generator (`KEPLER-418`, `HUBBLE 418`, `GAIA-418A`, `NEXUS-IV`, etc.), backed by a much bigger `PREFIXES` list, a `SUFFIXES` string, and a `ROMAN` array.
+
+**Concepts that showed up:**
+- **`switch`/`case` with a `default`** — `makeName()` picks one of 7 patterns via `randInt(0, 6)`; cases `0`–`5` are explicit, `default` catches the 7th value. Each `case` `return`s immediately, so there's no fall-through to worry about.
+- **Strings index like arrays** — `pick(SUFFIXES)` works even though `SUFFIXES` is a string (`"ABCDEFGHIJKLMNOPQRSTUVWXYZ"`), not an array, because `pick()` just does `arr[Math.floor(rng() * arr.length)]`, and JS strings support both `.length` and bracket-indexing the same way arrays do.
+- **Template literals chained back-to-back** — `` `${prefix}-${randInt(1, 999)}${pick(SUFFIXES)}` `` interpolates twice with no separator between the last two, which is what makes `GAIA-418A` read as one token instead of `GAIA-418 A`.
+
+**Design note:** first two colors picked for `asteroid`/`comet` (`#D177C1` / `#A777D1`) were too close in hue to tell apart at node scale — nudged to `#C77FA0` (warm rose) / `#7C8CE0` (cool indigo) so they still read as the same "debris" family but are distinguishable at a glance. Worth eyeballing new colors against the existing palette before committing, since color is doing a lot of the game's signaling work later.

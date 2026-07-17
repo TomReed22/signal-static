@@ -49,7 +49,7 @@
    just what it gives you: a function `rng()` that returns a
    number between 0 and 1, deterministically.)
 ---------------------------------------------------------------- */
-const SEED = 89745; // <-- change me and refresh!
+const SEED = 74575; // <-- change me and refresh!
 
 function makeRng(seed) {
   return function () {
@@ -96,9 +96,65 @@ let nodes = []; // our table
 /* -------------------------------------------------------------
    3. NAME GENERATOR (flavor, but cheap and fun)
 ---------------------------------------------------------------- */
-const PREFIXES = ["KEPLER", "GLIESE", "TAU", "VEGA", "ROSS", "WOLF", "LUYTEN", "HD"];
+const PREFIXES = [
+  // Astronomers
+  "KEPLER", "GALILEO", "COPERNICUS", "TYCHO", "HUBBLE",
+  "HERSCHEL", "BARNARD", "ROSS", "LUYTEN", "KAPTEYN",
+  "LACAILLE", "LEAVITT", "PAYNE", "SAGAN", "HAWKING",
+  "JANSSKY", "EDDINGTON", "NEWTON", "MAXWELL", "HALLEY",
+
+  // Space missions & telescopes
+  "GAIA", "CHANDRA", "VOYAGER", "PIONEER", "CASSINI",
+  "APOLLO", "MARINER", "PATHFINDER", "DISCOVERY", "ENDEAVOUR",
+
+  // Astronomical catalogues
+  "HD", "HIP", "NGC", "IC", "LHS", "GJ", "SH", "M",
+
+  // Mythology
+  "ATLAS", "JANUS", "AETHER", "HELIOS", "HERMES",
+  "PROMETHEUS", "NYX", "ERIS", "TITAN", "HYPERION",
+
+  // Survey / exploration
+  "NEXUS", "BEACON", "RELAY", "HORIZON", "PRISM",
+  "VORTEX", "ECHO", "ASCENT", "MONOLITH", "AEGIS"
+];
+
+const SUFFIXES = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const ROMAN = ["I","II","III","IV","V","VI","VII","VIII","IX","X"];
+
 function makeName() {
-  return pick(PREFIXES) + "-" + randInt(100, 999);
+  const prefix = pick(PREFIXES);
+
+  switch (randInt(0, 6)) {
+
+    // KEPLER-418
+    case 0:
+      return `${prefix}-${randInt(1, 9999)}`;
+
+    // HUBBLE 418
+    case 1:
+      return `${prefix} ${randInt(1, 9999)}`;
+
+    // GAIA-418A
+    case 2:
+      return `${prefix}-${randInt(1, 999)}${pick(SUFFIXES)}`;
+
+    // ATLAS 418-B
+    case 3:
+      return `${prefix} ${randInt(1, 999)}-${pick(SUFFIXES)}`;
+
+    // NEXUS-IV
+    case 4:
+      return `${prefix}-${pick(ROMAN)}`;
+
+    // HORIZON X-418
+    case 5:
+      return `${prefix} ${pick(SUFFIXES)}-${randInt(1, 999)}`;
+
+    // HIP-4827-IV
+    default:
+      return `${prefix}-${randInt(1, 9999)}-${pick(ROMAN)}`;
+  }
 }
 
 
@@ -135,7 +191,7 @@ function generateGalaxy() {
         name: makeName(),
         x: Math.round(x),
         y: Math.round(y),
-        type: pick(["star", "planet", "planet", "asteroid"]), // planets 2x likely
+        type: pick(["star", "planet", "planet", "wreckage", "asteroid", "comet"]), // planets 2x likely
         state: "hidden",
       });
     }
@@ -170,10 +226,12 @@ function generateGalaxy() {
    generation result. Segment 2 makes hidden mean hidden.
 ---------------------------------------------------------------- */
 const COLORS = {
-  home:     "#4fd8eb",
-  star:     "#c4d6e4",
-  planet:   "#6fe08a",
-  asteroid: "#e8b34b",
+  home:     "#50A8EB",
+  star:     "#FFF6EA",
+  planet:   "#6FE08A",
+  asteroid: "#C77FA0",
+  comet:    "#7C8CE0",
+  wreckage: "#D64848" 
 };
 
 const svg = document.getElementById("map");
