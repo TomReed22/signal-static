@@ -4,7 +4,7 @@ Plain-English dev log. One dated entry per work session: what got built, why, an
 
 ---
 
-## 2026-07-17 — Project setup
+## 2026-07-18 — Project setup
 
 **What was built:**
 - Fixed a file-naming accident: everything on disk had a doubled extension (`CLAUDE.md.md`, `index.html.html`, etc.) — renamed to the correct names so the game and GitHub Pages actually work.
@@ -28,7 +28,7 @@ Plain-English dev log. One dated entry per work session: what got built, why, an
 
 ---
 
-## 2026-07-17 — Segment 1 exercise: new node types + name generator
+## 2026-07-18 — Segment 1 exercise: new node types + name generator
 
 **What was built:** the Segment 1 ritual exercise, and then some. Added two new node types (`wreckage`, `comet`) to `generateGalaxy()`'s type pool and `COLORS`, then rebuilt `makeName()` from a single naming pattern into a 7-pattern generator (`KEPLER-418`, `HUBBLE 418`, `GAIA-418A`, `NEXUS-IV`, etc.), backed by a much bigger `PREFIXES` list, a `SUFFIXES` string, and a `ROMAN` array.
 
@@ -38,3 +38,20 @@ Plain-English dev log. One dated entry per work session: what got built, why, an
 - **Template literals chained back-to-back** — `` `${prefix}-${randInt(1, 999)}${pick(SUFFIXES)}` `` interpolates twice with no separator between the last two, which is what makes `GAIA-418A` read as one token instead of `GAIA-418 A`.
 
 **Design note:** first two colors picked for `asteroid`/`comet` (`#D177C1` / `#A777D1`) were too close in hue to tell apart at node scale — nudged to `#C77FA0` (warm rose) / `#7C8CE0` (cool indigo) so they still read as the same "debris" family but are distinguishable at a glance. Worth eyeballing new colors against the existing palette before committing, since color is doing a lot of the game's signaling work later.
+
+---
+
+## 2026-07-18 — Centre-home, guaranteed spacing, and a zoom/pan camera
+
+**What was built:**
+- **Home is now placed, not promoted.** The old code promoted whichever generated node landed *nearest* the centre — which in a sparse galaxy could still be well off-centre. Now `generateGalaxy()` places SOL at the exact centre and uses `.filter()` to clear out any node too close to it first, so it never overlaps a neighbour. (See section 4.)
+- **Nodes can no longer overlap.** Added a spacing guarantee: before placing a candidate node, we skip it if any already-placed node is within `MIN_DIST`. This turns "nodes rarely overlap" into "nodes never overlap".
+- **Grander galaxy + a camera.** Enlarged the map coordinate space to 3200×1800 so the galaxy feels roomy, and added scroll-to-zoom / drag-to-pan by moving the SVG `viewBox` (section 7).
+- You also independently added a `moon` node type and finished **Exercise 3** (distance-from-home in `inspect()`) — both working.
+
+**Concepts that showed up:**
+- **`.some()`** (section 4, spacing check) — returns `true` if the test passes for *at least one* item in an array. We use it to ask "is any existing node too close?". Its siblings: `.filter()` (keep matching items → the home-overlap clear-out) and `.find()` (first matching item → your Exercise 3 home lookup). Three array methods, same shape, different questions — all your SQL `WHERE` instincts.
+- **The camera / viewBox trick** (section 7) — the galaxy data never moves; we only change *which rectangle of the map fills the screen* (`viewBox`). Zoom = shrink that rectangle, pan = slide it. This keeps the sacred rule intact: rendering (and now the camera) only ever *reads* state, never mutates node data.
+- **Events + a drag-vs-click flag** — `addEventListener("wheel"/"mousedown"/"mousemove")` wires functions to user input. A `panMoved` flag distinguishes a real drag from a click, so panning across a node doesn't accidentally "inspect" it.
+
+**Deviation from the plan (on the record):** scroll-to-zoom/pan is a small fork away from the *locked* visual target (`docs/mockup-landscape.html`), which is a fixed 16:9 "screenshot" stage, not a zoomable map. Built it now because the developer wanted it and visuals are placeholder until Segment 7 ("the dress"); when we do the real visual pass we'll need to decide whether the zoomable camera stays or the fixed-stage look wins. Logged per CLAUDE.md's scope rule. Mobile pinch-zoom/drag isn't implemented yet (desktop wheel/drag only) — tap-to-inspect still works on phones. See `PARKING_LOT.md`.

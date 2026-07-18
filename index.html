@@ -11,7 +11,12 @@
     background: rgba(10,16,24,.9); border: 1px solid #16222e;
     padding: 10px; font-size: 13px; max-width: 260px;
   }
-  svg { width: 100vw; height: 100vh; display: block; }
+  svg {
+    width: 100vw; height: 100vh; display: block;
+    cursor: grab;              /* hints "you can drag this" */
+    user-select: none;         /* don't select label text while panning */
+  }
+  svg.grabbing { cursor: grabbing; }
   circle.node { cursor: pointer; }
   circle.node:hover { stroke: #4fd8eb; stroke-width: 2; }
 </style>
@@ -167,11 +172,12 @@ function makeName() {
    spacing, ten lines of code. This is the cheap cousin of
    Poisson disc sampling we talked about.
 ---------------------------------------------------------------- */
-const MAP_W = 1600, MAP_H = 900;
-const COLS = 6, ROWS = 4;          // 6x4 = 24 cells
+const MAP_W = 3200, MAP_H = 1800;   // a big, roomy galaxy — pan/zoom to explore it
+const COLS = 20, ROWS = 8;          // 20x8 = 160 candidate cells
 const CELL_W = MAP_W / COLS;
 const CELL_H = MAP_H / ROWS;
-const NODE_CHANCE = 0.7;           // not every cell gets a node (~15-17 nodes)
+const NODE_CHANCE = 0.1;            // ~10% of cells get a node (sparse, spread out)
+const MIN_DIST = 240;               // no two nodes may sit closer than this (map units)
 
 function generateGalaxy() {
   nodes = [];
@@ -186,30 +192,58 @@ function generateGalaxy() {
       const x = col * CELL_W + CELL_W * 0.2 + rng() * CELL_W * 0.6;
       const y = row * CELL_H + CELL_H * 0.2 + rng() * CELL_H * 0.6;
 
+      // SPACING GUARANTEE: skip this candidate if it would land too
+      // close to a node we've already placed. This turns "nodes rarely
+      // overlap" into "nodes never overlap".
+      // CONCEPT: .some() returns true if the test passes for AT LEAST ONE
+      // item in the array — here, "is any existing node nearer than
+      // MIN_DIST?" If yes, we bail on this cell and leave it empty.
+      if (nodes.some(other => {
+        const d = Math.sqrt((other.x - x) ** 2 + (other.y - y) ** 2);
+        return d < MIN_DIST;
+      })) continue;
+
       nodes.push({
         id: id++,
         name: makeName(),
         x: Math.round(x),
         y: Math.round(y),
-        type: pick(["star", "planet", "planet", "wreckage", "asteroid", "comet"]), // planets 2x likely
+        type: pick(["star", "planet", "planet", "wreckage", "asteroid", "comet", "moon"]), // planets 2x likely
         state: "hidden",
       });
     }
   }
 
-  // THE HOME NODE: overwrite whichever generated node is closest
-  // to the map centre. WHY closest-to-centre instead of pushing a
-  // new node? Because it guarantees home always sits naturally
-  // inside the generated web, never on top of another node.
-  let home = nodes[0];
-  let bestDist = Infinity;
-  for (const n of nodes) {
-    const d = (n.x - MAP_W / 2) ** 2 + (n.y - MAP_H / 2) ** 2;
-    if (d < bestDist) { bestDist = d; home = n; }
-  }
-  home.name = "SOL — EARTH";
-  home.type = "home";
-  home.state = "revealed";
+  // THE HOME NODE: SOL — EARTH sits at the DEAD CENTRE of the map.
+  // WHY the change: the old version just promoted whichever generated
+  // node landed *nearest* the middle — but in a sparse galaxy "nearest"
+  // can still be well off-centre, which feels bad. Home is the player's
+  // anchor, so we now place it deliberately at the exact centre.
+  const HOME_X = MAP_W / 2, HOME_Y = MAP_H / 2;
+
+  // First, clear out any generated node sitting right on top of the
+  // centre, so SOL never overlaps a neighbour.
+  // CONCEPT: .filter() builds a NEW array containing only the items for
+  // which the test returns true — it's your SQL WHERE clause. Here we
+  // keep every node whose distance from the centre is MORE than
+  // MIN_DIST, and silently drop the rest.
+  // CONCEPT: `n => { ... }` is an arrow function — a compact way to write
+  // "given a node n, do this and return a result". You've seen its shape
+  // in pick(); this one has a { } body because it needs two lines.
+  nodes = nodes.filter(n => {
+    const dist = Math.sqrt((n.x - HOME_X) ** 2 + (n.y - HOME_Y) ** 2);
+    return dist > MIN_DIST;
+  });
+
+  // Then drop SOL itself in, exactly at the centre.
+  nodes.push({
+    id: id++,
+    name: "SOL — EARTH",
+    x: HOME_X,
+    y: HOME_Y,
+    type: "home",
+    state: "revealed",
+  });
 }
 
 
@@ -231,7 +265,8 @@ const COLORS = {
   planet:   "#6FE08A",
   asteroid: "#C77FA0",
   comet:    "#7C8CE0",
-  wreckage: "#D64848" 
+  wreckage: "#D64848",
+  moon:     "#BBC7C5"
 };
 
 const svg = document.getElementById("map");
@@ -243,42 +278,126 @@ function render() {
     const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     c.setAttribute("cx", n.x);
     c.setAttribute("cy", n.y);
-    c.setAttribute("r", n.type === "home" ? 10 : 6);
+    c.setAttribute("r", n.type === "home" ? 20 : 12);
     c.setAttribute("fill", COLORS[n.type]);
     c.setAttribute("class", "node");
     c.setAttribute("opacity", n.state === "hidden" ? 0.25 : 1); // dev x-ray vision
-    c.addEventListener("click", () => inspect(n));
+    c.addEventListener("click", () => { if (!panMoved) inspect(n); });
     svg.appendChild(c);
 
     // Name label next to each node
     const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    t.setAttribute("x", n.x + 12);
-    t.setAttribute("y", n.y + 4);
+    t.setAttribute("x", n.x + 22);
+    t.setAttribute("y", n.y + 6);
     t.setAttribute("fill", "#3d5468");
-    t.setAttribute("font-size", "11");
+    t.setAttribute("font-size", "18");
     t.setAttribute("font-family", "monospace");
     t.textContent = n.name;
     svg.appendChild(t);
   }
 }
 
-
 /* -------------------------------------------------------------
    6. INSPECT — click a node, see its row
-   ---------------------------------------------------------------
-   WHY: This is your first taste of the debugging habit that will
-   carry the whole project: when something looks wrong on screen,
-   look at the DATA, not the pixels.
----------------------------------------------------------------- */
+   ----------------------------------------------------------- */
 function inspect(node) {
+  const home = nodes.find(n => n.type === "home");
+
+  const dist = Math.round(Math.sqrt((node.x - home.x) ** 2 + (node.y - home.y) ** 2));
+
   document.getElementById("info").innerHTML =
     `<b>NODE ${node.id}</b><br>` +
     `name: ${node.name}<br>` +
     `type: ${node.type}<br>` +
     `pos: ${node.x}, ${node.y}<br>` +
-    `state: ${node.state}`;
+    `state: ${node.state}<br>` +
+    `dist from home: ${dist}`;
   console.log("Inspected node:", node); // open DevTools (F12) → Console
 }
+
+
+/* -------------------------------------------------------------
+   7. ZOOM & PAN — move the CAMERA, never the galaxy
+   ---------------------------------------------------------------
+   WHY: the galaxy lives on a big canvas now. We let the player
+   scroll to zoom and drag to pan by changing the SVG's viewBox —
+   the rectangle of map-space that gets stretched to fill the
+   screen. Shrink the viewBox = zoom in; slide it = pan.
+
+   IMPORTANT: this only moves the *camera*. It never touches the
+   node data — still render-reads-only, same architecture rule.
+   `view` is the camera; the galaxy underneath it doesn't move.
+---------------------------------------------------------------- */
+const view = { x: 0, y: 0, w: MAP_W, h: MAP_H }; // start showing the whole map
+const MIN_W = MAP_W * 0.12;   // most zoomed IN  (small window = big nodes)
+const MAX_W = MAP_W;          // most zoomed OUT (whole galaxy visible)
+
+// Push the current camera rectangle onto the SVG. One place, one job.
+function applyView() {
+  svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+}
+
+// Convert a screen pixel (where the mouse is) into MAP coordinates.
+// getScreenCTM() is the browser's own screen<->SVG conversion matrix;
+// inverting it turns "pixel on screen" into "point on the map".
+function screenToMap(clientX, clientY) {
+  const pt = svg.createSVGPoint();
+  pt.x = clientX; pt.y = clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+// --- SCROLL WHEEL = ZOOM, centred on the cursor -----------------
+// CONCEPT: addEventListener wires a function to an event. "wheel"
+// fires on scroll; e.deltaY is negative when scrolling up.
+svg.addEventListener("wheel", (e) => {
+  e.preventDefault();                       // don't scroll the page too
+  const before = screenToMap(e.clientX, e.clientY); // map point under cursor
+  const factor = e.deltaY < 0 ? 0.9 : 1.1;  // up = shrink window = zoom in
+  let newW = view.w * factor;
+  newW = Math.max(MIN_W, Math.min(MAX_W, newW)); // clamp to zoom limits
+  const scale = newW / view.w;
+  view.w = newW;
+  view.h *= scale;
+  // Nudge the camera so the SAME map point stays under the cursor —
+  // this is what makes zoom feel like it's aimed where you point.
+  view.x = before.x - (before.x - view.x) * scale;
+  view.y = before.y - (before.y - view.y) * scale;
+  applyView();
+});
+
+// --- DRAG = PAN -------------------------------------------------
+// These three variables live out here (module scope) so the click
+// handler in render() can read panMoved. panMoved tells us "the user
+// dragged, don't treat the release as a node click".
+let panning = false, panMoved = false, panLast = null;
+
+svg.addEventListener("mousedown", (e) => {
+  panning = true; panMoved = false;
+  panLast = { x: e.clientX, y: e.clientY };
+  svg.classList.add("grabbing");
+});
+
+// Listen on window (not svg) so a fast drag that leaves the element
+// still keeps panning smoothly.
+window.addEventListener("mousemove", (e) => {
+  if (!panning) return;
+  // Moved more than a few pixels? Count it as a drag, not a click.
+  if (Math.abs(e.clientX - panLast.x) + Math.abs(e.clientY - panLast.y) > 3) {
+    panMoved = true;
+  }
+  // Move the camera by the mouse's movement, measured in map units.
+  const now  = screenToMap(e.clientX, e.clientY);
+  const then = screenToMap(panLast.x, panLast.y);
+  view.x -= now.x - then.x;
+  view.y -= now.y - then.y;
+  panLast = { x: e.clientX, y: e.clientY };
+  applyView();
+});
+
+window.addEventListener("mouseup", () => {
+  panning = false;
+  svg.classList.remove("grabbing");
+});
 
 
 /* -------------------------------------------------------------
@@ -286,6 +405,7 @@ function inspect(node) {
 ---------------------------------------------------------------- */
 generateGalaxy();
 render();
+applyView(); // point the camera at the whole map to start
 console.log(`Galaxy generated: ${nodes.length} nodes from seed ${SEED}`);
 console.table(nodes); // <-- SQL person, meet console.table. You're welcome.
 </script>

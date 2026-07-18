@@ -21,3 +21,5 @@ Ideas that aren't in the current segment. Reviewed only between segments (see CL
 ---
 
 ## New ideas (add below as they come up)
+- **Mobile pinch-zoom + touch-drag pan** — the zoom/pan camera added in Segment 1 is desktop-only (mouse wheel + drag). Phones can still tap-to-inspect but can't zoom/pan the galaxy. Needs `touch`/pointer event handling (pinch = two-finger scale). (Added 2026-07-18.)
+- **Reconcile the zoomable camera with the fixed 16:9 mockup look** — decide at Segment 7 ("the dress") whether the scroll-zoom map stays, or we return to the fixed screenshot-style stage from `docs/mockup-landscape.html`. These two directions conflict. (Added 2026-07-18.)
