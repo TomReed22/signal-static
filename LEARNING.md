@@ -55,3 +55,20 @@ Plain-English dev log. One dated entry per work session: what got built, why, an
 - **Events + a drag-vs-click flag** — `addEventListener("wheel"/"mousedown"/"mousemove")` wires functions to user input. A `panMoved` flag distinguishes a real drag from a click, so panning across a node doesn't accidentally "inspect" it.
 
 **Deviation from the plan (on the record):** scroll-to-zoom/pan is a small fork away from the *locked* visual target (`docs/mockup-landscape.html`), which is a fixed 16:9 "screenshot" stage, not a zoomable map. Built it now because the developer wanted it and visuals are placeholder until Segment 7 ("the dress"); when we do the real visual pass we'll need to decide whether the zoomable camera stays or the fixed-stage look wins. Logged per CLAUDE.md's scope rule. Mobile pinch-zoom/drag isn't implemented yet (desktop wheel/drag only) — tap-to-inspect still works on phones. See `PARKING_LOT.md`.
+
+---
+
+## 2026-07-18 — Realistic star systems (hierarchy in the data model)
+
+**What was built:** generation now models real structure instead of a flat scatter. Stars are placed at spaced random positions; each star gets planets in orbit; each planet gets 0–2 moons in tighter orbit. Loose bodies (asteroids/comets/wreckage) still drift at random. SOL is a full home system at the centre with EARTH as its innermost planet. Faint orbit rings are drawn so you can *see* what orbits what. (All in section 4 generation + section 5 render.)
+
+**The one big idea — a foreign key (`parentId`):**
+- The `nodes` table gained a `parentId` column: a planet's `parentId` is its star's `id`; a moon's is its planet's `id`; stars and loose bodies have `parentId: null`. This is a **self-referencing foreign key** — the same shape as an `employees` table with a `manager_id` pointing at another employee row. It's what turns a flat list into a hierarchy, and later segments (probe travel, claiming) can walk it.
+- Also added a `size` column so bodies render at different radii (stars biggest → moons smallest).
+
+**JS concepts that showed up:**
+- **Spread `...body`** (section 4, the `add()` helper) — `{ id: id++, parentId: null, ...body }` copies every field from `body` into a new object. Because `...body` comes *after* `parentId: null`, a body that supplies its own `parentId` overrides the default; one that doesn't stays `null`. Spread = "copy all the fields of that object into this one."
+- **`.find()` for the parent lookup** (section 5, ring pass) — `nodes.find(p => p.id === n.parentId)` fetches a body's parent row by id. Same method you used in Exercise 3; here it walks the foreign key. (SQL: a self-join on `parentId = id`.)
+- **A tiny bit of trig for orbits** — `x = star.x + Math.cos(angle) * orbit`, `y = star.y + Math.sin(angle) * orbit` places a body at a random `angle` and a set `orbit` distance around its parent. cos handles the horizontal part, sin the vertical; together they walk a circle. You don't need to derive it — just know "cos/sin + a radius = a point on a circle."
+
+**Design note (logged, we chose to build it):** this is a meaningful data-model change that will ripple into Segment 2 (probe travel) and Segment 4 (the choice) — we'll have to decide whether the player scans/claims an individual body or a whole star system. Building the placement now keeps that decision open; it actually strengthens the "a star is the distant signal; surveying reveals its planets" fantasy. Possible future exercise: extend `inspect()` to also show `orbits: <parent name>` using the same `.find()` on `parentId`.

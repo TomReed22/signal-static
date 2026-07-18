@@ -164,86 +164,135 @@ function makeName() {
 
 
 /* -------------------------------------------------------------
-   4. GALAXY GENERATION — the jittered grid
+   4. GALAXY GENERATION — star systems, not a flat scatter
    ---------------------------------------------------------------
-   WHY: Pure random placement makes ugly clumps and overlaps.
-   Trick: divide the map into grid cells, put ONE node per cell,
-   then nudge it by a random offset. Organic look, guaranteed
-   spacing, ten lines of code. This is the cheap cousin of
-   Poisson disc sampling we talked about.
+   WHY the redesign: we want realism. Stars land at (spaced) random
+   positions; then PLANETS are placed in orbit around each star, and
+   MOONS in orbit around each planet. Loose bodies (asteroids, comets,
+   wreckage) still drift at random.
+
+   The one new idea in the data model is a FOREIGN KEY:
+     parentId — which body this one orbits.
+       star / loose body -> parentId is null (orbits nothing)
+       planet            -> parentId is its star's id
+       moon              -> parentId is its planet's id
+   Plus a `size` column (render radius) so bodies vary in size.
+   In SQL terms: nodes now self-references via parentId, exactly like
+   an employees table with a manager_id pointing at another employee.
 ---------------------------------------------------------------- */
 const MAP_W = 3200, MAP_H = 1800;   // a big, roomy galaxy — pan/zoom to explore it
-const COLS = 20, ROWS = 8;          // 20x8 = 160 candidate cells
+const COLS = 20, ROWS = 8;          // grid used to scatter STAR candidates
 const CELL_W = MAP_W / COLS;
 const CELL_H = MAP_H / ROWS;
-const NODE_CHANCE = 0.1;            // ~10% of cells get a node (sparse, spread out)
-const MIN_DIST = 240;               // no two nodes may sit closer than this (map units)
+const STAR_CHANCE = 0.5;            // a cell may offer a star; spacing does the real filtering
+const MIN_STAR_DIST = 700;          // whole systems must not overlap — keep stars far apart
+const FREE_BODY_COUNT = 7;          // loose asteroids / comets / wreckage
+const MIN_FREE_DIST = 220;          // keep loose bodies out of the star systems
+
+// Straight-line distance between two points. Small helper so the
+// generation code below reads cleanly instead of repeating Math.sqrt.
+function dist(ax, ay, bx, by) {
+  return Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2);
+}
 
 function generateGalaxy() {
   nodes = [];
   let id = 0;
 
+  // Add one body to the table and return it (so children can grab its
+  // id for their parentId). Everything gets an auto id and a default
+  // parentId of null unless the body overrides it.
+  // CONCEPT: `...body` is the SPREAD operator — it copies every field
+  // from the body object we pass in. Listing parentId:null BEFORE the
+  // spread means the spread can override it (a moon passes its own
+  // parentId, a star doesn't and stays null).
+  function add(body) {
+    const node = { id: id++, parentId: null, ...body };
+    nodes.push(node);
+    return node;
+  }
+
+  // ---- 1. STARS -------------------------------------------------
+  // SOL first, dead centre — the player's home star.
+  const sol = add({
+    name: "SOL", x: MAP_W / 2, y: MAP_H / 2,
+    type: "home", size: 24, state: "revealed",
+  });
+
+  // Other stars on the jittered grid, each kept MIN_STAR_DIST away from
+  // every star already placed (including SOL) so systems never collide.
+  const stars = [sol];
   for (let col = 0; col < COLS; col++) {
     for (let row = 0; row < ROWS; row++) {
-      if (rng() > NODE_CHANCE) continue; // this cell stays empty space
-
-      // Cell's top-left corner, plus a jitter within the middle
-      // 60% of the cell (keeps nodes off cell edges → guaranteed gaps).
-      const x = col * CELL_W + CELL_W * 0.2 + rng() * CELL_W * 0.6;
-      const y = row * CELL_H + CELL_H * 0.2 + rng() * CELL_H * 0.6;
-
-      // SPACING GUARANTEE: skip this candidate if it would land too
-      // close to a node we've already placed. This turns "nodes rarely
-      // overlap" into "nodes never overlap".
-      // CONCEPT: .some() returns true if the test passes for AT LEAST ONE
-      // item in the array — here, "is any existing node nearer than
-      // MIN_DIST?" If yes, we bail on this cell and leave it empty.
-      if (nodes.some(other => {
-        const d = Math.sqrt((other.x - x) ** 2 + (other.y - y) ** 2);
-        return d < MIN_DIST;
-      })) continue;
-
-      nodes.push({
-        id: id++,
-        name: makeName(),
-        x: Math.round(x),
-        y: Math.round(y),
-        type: pick(["star", "planet", "planet", "wreckage", "asteroid", "comet", "moon"]), // planets 2x likely
-        state: "hidden",
-      });
+      if (rng() > STAR_CHANCE) continue;
+      const x = Math.round(col * CELL_W + CELL_W * 0.2 + rng() * CELL_W * 0.6);
+      const y = Math.round(row * CELL_H + CELL_H * 0.2 + rng() * CELL_H * 0.6);
+      if (stars.some(s => dist(x, y, s.x, s.y) < MIN_STAR_DIST)) continue; // too close → skip
+      stars.push(add({
+        name: makeName(), x, y,
+        type: "star", size: randInt(16, 22), state: "hidden",
+      }));
     }
   }
 
-  // THE HOME NODE: SOL — EARTH sits at the DEAD CENTRE of the map.
-  // WHY the change: the old version just promoted whichever generated
-  // node landed *nearest* the middle — but in a sparse galaxy "nearest"
-  // can still be well off-centre, which feels bad. Home is the player's
-  // anchor, so we now place it deliberately at the exact centre.
-  const HOME_X = MAP_W / 2, HOME_Y = MAP_H / 2;
+  // ---- 2. PLANETS + MOONS in orbit ------------------------------
+  // Real exoplanet naming: the star is "a", planets are b, c, d...
+  const PLANET_LETTERS = "bcdefg";
+  for (const star of stars) {
+    // SOL always gets a healthy system (Earth lives here); others vary.
+    const planetCount = star === sol ? randInt(3, 5) : randInt(1, 4);
 
-  // First, clear out any generated node sitting right on top of the
-  // centre, so SOL never overlaps a neighbour.
-  // CONCEPT: .filter() builds a NEW array containing only the items for
-  // which the test returns true — it's your SQL WHERE clause. Here we
-  // keep every node whose distance from the centre is MORE than
-  // MIN_DIST, and silently drop the rest.
-  // CONCEPT: `n => { ... }` is an arrow function — a compact way to write
-  // "given a node n, do this and return a result". You've seen its shape
-  // in pick(); this one has a { } body because it needs two lines.
-  nodes = nodes.filter(n => {
-    const dist = Math.sqrt((n.x - HOME_X) ** 2 + (n.y - HOME_Y) ** 2);
-    return dist > MIN_DIST;
-  });
+    let orbit = star.size + randInt(60, 90); // first orbit sits just outside the star
+    for (let p = 0; p < planetCount; p++) {
+      const angle = rng() * Math.PI * 2;                 // random direction around the star
+      const px = Math.round(star.x + Math.cos(angle) * orbit);
+      const py = Math.round(star.y + Math.sin(angle) * orbit);
 
-  // Then drop SOL itself in, exactly at the centre.
-  nodes.push({
-    id: id++,
-    name: "SOL — EARTH",
-    x: HOME_X,
-    y: HOME_Y,
-    type: "home",
-    state: "revealed",
-  });
+      // SOL's innermost planet is EARTH; every other planet inherits its
+      // star's catalogue name + a letter (e.g. "KEPLER-442 b").
+      const isEarth = (star === sol && p === 0);
+      const planet = add({
+        name: isEarth ? "EARTH" : `${star.name} ${PLANET_LETTERS[p]}`,
+        parentId: star.id,
+        x: px, y: py,
+        type: "planet", size: randInt(7, 13), state: "hidden",
+      });
+
+      // Moons: 0–2 small bodies on tight orbits around this planet.
+      const moonCount = randInt(0, 2);
+      let moonOrbit = planet.size + randInt(14, 22);
+      for (let m = 0; m < moonCount; m++) {
+        const ma = rng() * Math.PI * 2;
+        add({
+          name: `${planet.name} ${ROMAN[m]}`,
+          parentId: planet.id,
+          x: Math.round(planet.x + Math.cos(ma) * moonOrbit),
+          y: Math.round(planet.y + Math.sin(ma) * moonOrbit),
+          type: "moon", size: randInt(3, 5), state: "hidden",
+        });
+        moonOrbit += randInt(12, 18);
+      }
+
+      orbit += randInt(70, 120); // push the next planet's orbit further out
+    }
+  }
+
+  // ---- 3. LOOSE BODIES (drifting, not orbiting) -----------------
+  // Asteroids, comets, wreckage: random positions, kept MIN_FREE_DIST
+  // from anything already placed so they don't clutter the systems.
+  let placed = 0, attempts = 0;
+  while (placed < FREE_BODY_COUNT && attempts < 400) {
+    attempts++; // safety valve so we can never loop forever
+    const x = randInt(60, MAP_W - 60);
+    const y = randInt(60, MAP_H - 60);
+    if (nodes.some(n => dist(x, y, n.x, n.y) < MIN_FREE_DIST)) continue;
+    add({
+      name: makeName(), x, y,
+      type: pick(["asteroid", "comet", "wreckage"]),
+      size: randInt(5, 9), state: "hidden",
+    });
+    placed++;
+  }
 }
 
 
@@ -274,26 +323,49 @@ const svg = document.getElementById("map");
 function render() {
   svg.innerHTML = ""; // wipe and redraw — crude but fine at this scale
 
+  // PASS 1 — ORBIT RINGS, drawn first so they sit BEHIND the bodies.
+  // For every body that orbits something, draw a faint circle centred on
+  // its parent, with radius = how far the child sits from that parent.
+  // This is what makes "these planets belong to that star" readable.
+  for (const n of nodes) {
+    if (n.parentId === null) continue;               // stars & loose bodies orbit nothing
+    const parent = nodes.find(p => p.id === n.parentId); // look up the parent row by id
+    if (!parent) continue;
+    const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    ring.setAttribute("cx", parent.x);
+    ring.setAttribute("cy", parent.y);
+    ring.setAttribute("r", dist(n.x, n.y, parent.x, parent.y));
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", "#24384a");
+    ring.setAttribute("stroke-width", "2");
+    ring.setAttribute("opacity", "0.6");
+    svg.appendChild(ring);
+  }
+
+  // PASS 2 — the bodies themselves, plus name labels.
   for (const n of nodes) {
     const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     c.setAttribute("cx", n.x);
     c.setAttribute("cy", n.y);
-    c.setAttribute("r", n.type === "home" ? 20 : 12);
+    c.setAttribute("r", n.size);                     // size now lives on the node itself
     c.setAttribute("fill", COLORS[n.type]);
     c.setAttribute("class", "node");
     c.setAttribute("opacity", n.state === "hidden" ? 0.25 : 1); // dev x-ray vision
     c.addEventListener("click", () => { if (!panMoved) inspect(n); });
     svg.appendChild(c);
 
-    // Name label next to each node
-    const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
-    t.setAttribute("x", n.x + 22);
-    t.setAttribute("y", n.y + 6);
-    t.setAttribute("fill", "#3d5468");
-    t.setAttribute("font-size", "18");
-    t.setAttribute("font-family", "monospace");
-    t.textContent = n.name;
-    svg.appendChild(t);
+    // Name label — skip moons: they're tiny and there are lots, so
+    // labelling them just clutters the map. Click one to inspect it.
+    if (n.type !== "moon") {
+      const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      t.setAttribute("x", n.x + n.size + 6);         // offset clears the (variable) circle
+      t.setAttribute("y", n.y + 6);
+      t.setAttribute("fill", "#3d5468");
+      t.setAttribute("font-size", "18");
+      t.setAttribute("font-family", "monospace");
+      t.textContent = n.name;
+      svg.appendChild(t);
+    }
   }
 }
 
